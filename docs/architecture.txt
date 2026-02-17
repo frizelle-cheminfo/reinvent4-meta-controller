@@ -1,0 +1,308 @@
+REINVENT4 Meta-Controller Architecture
+======================================
+
+High-Level Overview
+-------------------
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                          User CLI                                   │
+│                    (reinvent-meta command)                          │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             │ Commands: init, run, report, list-arms
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       CLI Layer (cli.py)                            │
+│  - Typer app with subcommands                                       │
+│  - Input validation and user feedback (Rich)                        │
+│  - Orchestrates initialization, execution, reporting                │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                ┌────────────┼────────────┐
+                │            │            │
+                ▼            ▼            ▼
+    ┌───────────────┐ ┌────────────┐ ┌──────────────┐
+    │   Config      │ │   State    │ │   Arms       │
+    │  (config.py)  │ │ (state.py) │ │  (arms.py)   │
+    └───────┬───────┘ └─────┬──────┘ └──────┬───────┘
+            │               │               │
+            └───────────────┴───────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   MetaController (controller.py)                    │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  Hard Safety Rules (Priority 1)                               │ │
+│  │  - Check recent metrics against thresholds                    │ │
+│  │  - Trigger overrides if safety conditions met                 │ │
+│  │  - Return forced arm + reasons                                │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│                            │                                         │
+│                            ▼ (no trigger)                            │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  Bandit Selection (Priority 2)                                │ │
+│  │  - UCB scoring for each eligible arm                          │ │
+│  │  - Balance exploitation (mean quality) vs exploration (UCB)   │ │
+│  │  - Select arm with highest UCB score                          │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│                            │                                         │
+│                            ▼                                         │
+│              Selected Arm + Reasons                                 │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   EpisodeRunner (episode.py)                        │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  1. Seed Selection (if arm requires seeds)                    │ │
+│  │     - SeedSelector (seeds.py)                                 │ │
+│  │     - Exploit: top-scoring seeds                              │ │
+│  │     - Explore: diverse seeds (scaffold clustering)            │ │
+│  │     - Export to seeds.smi                                     │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│                            │                                         │
+│                            ▼                                         │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  2. Config Rendering                                          │ │
+│  │     - Jinja2 template rendering                               │ │
+│  │     - Templates: reinvent.toml.j2, mol2mol.toml.j2, etc.     │ │
+│  │     - Inject: prior path, seeds, scoring, diversity, etc.    │ │
+│  │     - Output: episode_XXX/reinvent_config.toml                │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│                            │                                         │
+│                            ▼                                         │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  3. REINVENT4 Execution                                       │ │
+│  │     - subprocess.run(reinvent_bin, config_file)               │ │
+│  │     - Capture stdout/stderr to reinvent.log                   │ │
+│  │     - Timeout: 1 hour                                         │ │
+│  │     - Dry-run mode: generate fake molecules for testing      │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│                            │                                         │
+│                            ▼                                         │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  4. Output Parsing                                            │ │
+│  │     - Read results.csv (configurable name)                    │ │
+│  │     - Extract SMILES and scores                               │ │
+│  │     - Return (smiles_list, scores_list)                       │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│               MetricsCalculator (metrics.py)                        │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  Compute Episode Metrics:                                     │ │
+│  │  - Validity % (valid SMILES)                                  │ │
+│  │  - Unique % (deduplicated)                                    │ │
+│  │  - Internal diversity (avg pairwise Tanimoto distance)        │ │
+│  │  - Scaffold diversity (unique Murcko scaffolds)               │ │
+│  │  - Rediscovery rate (vs prior episodes + reference actives)   │ │
+│  │  - Novelty (distance to support set)                          │ │
+│  │  - OOD rate (low similarity or high uncertainty)              │ │
+│  │  - Uncertainty mean (proxy: inverse similarity)               │ │
+│  │  - Top-k gain (improvement over campaign best)                │ │
+│  │  - Hit yield (fraction above threshold)                       │ │
+│  │  - Property pass rate (MW/logP/TPSA/HBD/HBA)                  │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│                            │                                         │
+│                            ▼                                         │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  Compute Quality Score:                                       │ │
+│  │  Q = + 2*topk_gain + hit_yield + diversity                    │ │
+│  │      - ood_rate - uncertainty - rediscovery                   │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     State Updates                                   │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  1. Update Seed Bank (seeds.py)                               │ │
+│  │     - Add top 20 molecules from episode                       │ │
+│  │     - Deduplicate by SMILES                                   │ │
+│  │     - Keep top N by score (default 100)                       │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  2. Update Arm Statistics (state.py)                          │ │
+│  │     - Increment episodes_run                                  │ │
+│  │     - Update total_quality, mean_quality                      │ │
+│  │     - Track successes/failures                                │ │
+│  │     - Blacklist if 3 consecutive failures                     │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  3. Update Campaign State (state.py)                          │ │
+│  │     - Add episode to history                                  │ │
+│  │     - Update best_score if improved                           │ │
+│  │     - Extend all_generated_smiles                             │ │
+│  │     - Save state.json                                         │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             │ (repeat for N episodes)
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   ReportGenerator (reporting.py)                    │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  1. Create Manifest (manifest.json)                           │ │
+│  │     - Campaign metadata                                       │ │
+│  │     - All episode records                                     │ │
+│  │     - Arm statistics                                          │ │
+│  │     - Machine-readable JSON                                   │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  2. Generate Plots (matplotlib)                               │ │
+│  │     - Best score progression                                  │ │
+│  │     - Diversity over episodes                                 │ │
+│  │     - OOD rate and uncertainty                                │ │
+│  │     - Arm selection frequency                                 │ │
+│  │     - Arm performance (mean quality)                          │ │
+│  │     - Convert to base64 PNG for embedding                     │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  3. Generate Markdown Report (report.md)                      │ │
+│  │     - Episode timeline table                                  │ │
+│  │     - Strategy switches narrative                             │ │
+│  │     - Molecule evolution (best per episode)                   │ │
+│  │     - Arm performance summary                                 │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  4. Generate HTML Report (report.html)                        │ │
+│  │     - Standalone HTML with embedded plots                     │ │
+│  │     - Summary metrics boxes                                   │ │
+│  │     - Episode timeline table                                  │ │
+│  │     - Strategy switches                                       │ │
+│  │     - No external dependencies (base64 images)                │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+Data Flow
+---------
+
+User Input
+    │
+    ▼
+Campaign Config (YAML)
+    │
+    ├─ priors_dir
+    ├─ episode settings (steps, batch_size, LR)
+    ├─ scoring weights
+    ├─ property constraints
+    ├─ thresholds
+    └─ bandit parameters
+    │
+    ▼
+Controller State (JSON)
+    │
+    ├─ episodes_history: [EpisodeRecord]
+    ├─ arm_stats: {arm_id: ArmStatistics}
+    ├─ seed_bank: [SeedRecord]
+    ├─ best_molecules: [MoleculeRecord]
+    └─ all_generated_smiles: [str]
+    │
+    ▼
+Episode Execution
+    │
+    ├─ Selected arm (ArmConfig)
+    ├─ Seeds (if needed)
+    ├─ REINVENT4 TOML config (rendered from template)
+    │
+    ▼
+REINVENT4 Output
+    │
+    ├─ results.csv (SMILES, scores)
+    ├─ checkpoint.chkpt (for resume)
+    └─ reinvent.log
+    │
+    ▼
+Computed Metrics
+    │
+    └─ EpisodeMetrics (validity, diversity, OOD, etc.)
+    │
+    ▼
+Updated State
+    │
+    ├─ Seed bank updated
+    ├─ Arm stats updated
+    └─ Best score updated
+    │
+    ▼
+Report Artifacts
+    │
+    ├─ manifest.json
+    ├─ report.md
+    ├─ report.html
+    └─ plots (embedded as base64)
+
+
+Module Dependency Graph
+-----------------------
+
+         cli.py
+            │
+    ┌───────┼───────────┐
+    │       │           │
+    ▼       ▼           ▼
+config.py state.py  arms.py
+    │       │           │
+    └───────┼───────────┘
+            │
+            ▼
+      controller.py
+            │
+    ┌───────┼───────┐
+    │       │       │
+    ▼       ▼       ▼
+episode.py metrics.py seeds.py
+    │       │       │
+    │   ┌───┴───┐   │
+    │   │       │   │
+    ▼   ▼       ▼   ▼
+  utils.py  reporting.py
+    │           │
+    └───────────┘
+         │
+         ▼
+    (RDKit optional)
+
+
+File Structure
+--------------
+
+reinvent4-meta-controller/
+├── src/reinvent_meta/
+│   ├── __init__.py
+│   ├── cli.py              # CLI entry point (Typer)
+│   ├── config.py           # Pydantic config models
+│   ├── state.py            # Pydantic state models
+│   ├── arms.py             # Arm catalog definition
+│   ├── controller.py       # Meta-controller logic (hard rules + bandit)
+│   ├── episode.py          # Episode runner (REINVENT4 integration)
+│   ├── metrics.py          # Metrics computation
+│   ├── seeds.py            # Seed bank management
+│   ├── reporting.py        # Report generation
+│   ├── utils.py            # Utility functions (RDKit wrapper)
+│   └── templates/          # Jinja2 TOML templates
+│       ├── reinvent.toml.j2
+│       ├── mol2mol.toml.j2
+│       ├── libinvent.toml.j2
+│       └── linkinvent.toml.j2
+├── tests/                  # Pytest tests
+│   ├── test_arms.py
+│   ├── test_controller.py
+│   ├── test_metrics.py
+│   ├── test_seeds.py
+│   └── test_reporting.py
+├── examples/               # Example configs
+│   ├── controller.yaml
+│   ├── reference_actives.smi
+│   └── priors/README.md
+├── docs/                   # Documentation
+│   ├── how-it-works.md
+│   └── architecture.txt    # This file
+├── pyproject.toml          # Package metadata
+├── README.md               # User-facing documentation
+└── Makefile                # Convenience targets

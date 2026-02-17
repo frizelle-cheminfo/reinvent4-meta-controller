@@ -1,0 +1,75 @@
+# Demo configuration for REINVENT4 Meta-Controller
+# Fast demonstration of adaptive exploration/exploitation
+# Uses toy data - runs in ~5 minutes on CPU
+
+run:
+  name: "demo_run"
+  output_dir: "out/demo_run"
+  n_episodes: 10
+  mode: "hit_discovery"  # Tolerates OOD, emphasizes novelty
+  seed: 42
+
+# Toy QSAR model (uses simple scaffold-based scoring in demo)
+qsar:
+  type: "toy"
+  model_path: null
+  uncertainty_threshold: 0.3  # Higher tolerance for hit discovery
+  ood_threshold: 0.7         # Higher tolerance for hit discovery
+
+# Bandit policy for arm selection
+bandit:
+  policy: "ucb"
+  c: 1.5  # Exploration parameter
+  initial_pulls: 1  # Pull each arm once initially
+
+# Arms (strategies)
+arms:
+  - name: "reinvent_qsar_explore"
+    type: "reinvent"
+    prior: "priors/libinvent.prior"
+    scoring:
+      - qsar: 1.0
+      - novelty: 0.3
+    batch_size: 128
+    n_steps: 100
+
+  - name: "reinvent_explore"
+    type: "reinvent"
+    prior: "priors/libinvent.prior"
+    scoring:
+      - diversity: 0.7
+      - novelty: 0.3
+    batch_size: 128
+    n_steps: 100
+
+  - name: "reinvent_exploit"
+    type: "reinvent"
+    prior: "priors/libinvent.prior"
+    scoring:
+      - qsar: 1.0
+      - similarity_to_seeds: 0.4
+    batch_size: 128
+    n_steps: 100
+
+# Seed bank management
+seed_bank:
+  max_size: 100
+  min_score: 0.5
+  diversity_threshold: 0.6
+
+# Episode termination
+termination:
+  - type: "stagnation"
+    patience: 3
+    metric: "mean_score"
+    threshold: 0.05
+  - type: "target_reached"
+    metric: "top_score"
+    threshold: 0.9
+
+# Purchasable constraints (applied in reporting)
+purchasable:
+  enabled: true
+  csv_path: "data/toy_purchasable_stub.csv"
+  similarity_threshold: 0.7
+  apply_hard_filter: false  # Soft filter for reporting only

@@ -1,0 +1,56 @@
+# Lead Optimisation Mode
+#
+# Operational philosophy:
+# - Stay within QSAR applicability domain
+# - Penalize high uncertainty predictions
+# - Emphasize ranking stability and confidence
+# - Shorter exploit cycles around validated chemistry
+# - Higher bar for seed bank entry
+
+run:
+  mode: "lead_optimisation"
+  n_episodes: 30
+
+qsar:
+  uncertainty_threshold: 0.2  # Low tolerance
+  ood_threshold: 0.5          # Low tolerance
+  confidence_weight: 0.7      # High penalty for uncertainty
+
+bandit:
+  policy: "ucb"
+  c: 1.0  # Lower exploration bonus
+
+arms:
+  - name: "reinvent_exploit"
+    type: "reinvent"
+    scoring:
+      - qsar: 1.0
+      - uncertainty_penalty: -0.5  # Penalize uncertainty
+      - similarity_to_seeds: 0.6   # Stay close to seeds
+    n_steps: 100
+
+  - name: "mol2mol_high_sim_exploit"
+    type: "mol2mol"
+    scoring:
+      - qsar: 1.0
+      - similarity: 0.85  # Very similar to seeds
+      - uncertainty_penalty: -0.5
+    n_steps: 100
+
+  - name: "mol2mol_mmp_exploit"
+    type: "mol2mol"
+    scoring:
+      - qsar: 1.0
+      - mmp_similarity: 0.9  # Matched molecular pair transforms
+    n_steps: 100
+
+seed_bank:
+  min_score: 0.7  # Higher threshold
+  diversity_threshold: 0.4  # Lower diversity requirement
+
+termination:
+  - type: "stagnation"
+    patience: 2  # Less patience
+  - type: "confidence_degradation"
+    metric: "mean_uncertainty"
+    threshold: 0.3  # Stop if uncertainty rises

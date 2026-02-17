@@ -1,0 +1,52 @@
+# Hit Discovery Mode
+#
+# Operational philosophy:
+# - Tolerate high OOD (QSAR applicability less critical)
+# - Emphasize novelty and chemical diversity
+# - Accept that QSAR is directional rather than quantitative
+# - Longer exploration runs before switching to exploit
+# - Lower confidence requirements
+
+run:
+  mode: "hit_discovery"
+  n_episodes: 50
+
+qsar:
+  uncertainty_threshold: 0.4  # High tolerance
+  ood_threshold: 0.7          # High tolerance
+  confidence_weight: 0.3      # Lower penalty for uncertainty
+
+bandit:
+  policy: "ucb"
+  c: 2.0  # Higher exploration bonus
+
+arms:
+  - name: "reinvent_qsar_explore"
+    type: "reinvent"
+    scoring:
+      - qsar: 1.0
+      - novelty: 0.5  # Higher novelty weight
+      - diversity: 0.3
+    n_steps: 200  # Longer runs
+
+  - name: "reinvent_explore"
+    type: "reinvent"
+    scoring:
+      - diversity: 0.8
+      - novelty: 0.5
+    n_steps: 200
+
+  - name: "mol2mol_qsar_high_sim"
+    type: "mol2mol"
+    scoring:
+      - qsar: 1.0
+      - similarity: 0.7  # Allow more deviation
+    n_steps: 150
+
+seed_bank:
+  min_score: 0.4  # Lower threshold
+  diversity_threshold: 0.7  # Higher diversity requirement
+
+termination:
+  - type: "stagnation"
+    patience: 5  # More patience

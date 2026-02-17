@@ -1,0 +1,7 @@
+
+Episode 1: Selected arm: reinvent_explore
+Reasons: ["High UCB score", "Low uncertainty"]
+Episode 2: Selected arm: mol2mol_exploit  
+Reasons: ["Best reward", "High confidence"]
+Episode 3: Selected arm: reinvent_explore
+Reasons: ["Exploration needed", "Novelty bonus"]
