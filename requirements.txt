@@ -12,7 +12,7 @@ scikit-learn>=1.0.0
 typer>=0.9.0
 rich>=13.0.0
 
-# Optional: REINVENT4 (for actual molecular generation)
+# REINVENT4 (for actual molecular generation)
 # Install separately from: https://github.com/MolecularAI/REINVENT4
 
 # Development dependencies (install with: pip install -e ".[dev]")
